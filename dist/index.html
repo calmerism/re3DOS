@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <meta name="description" content="GTA III (re3) running in your browser via WebAssembly. Open-source engine port of Grand Theft Auto III.">
+    <title>re3DOS</title>
+    <script>
+        // Visual debug console for re3DOS
+        (function() {
+            const debugContainer = document.createElement('div');
+            debugContainer.id = 'visual-debug-console';
+            Object.assign(debugContainer.style, {
+                position: 'absolute',
+                bottom: '10px',
+                left: '10px',
+                right: '10px',
+                maxHeight: '180px',
+                overflowY: 'auto',
+                background: 'rgba(10, 12, 14, 0.92)',
+                border: '1px solid #1e252e',
+                borderRadius: '6px',
+                padding: '10px',
+                paddingTop: '30px',
+                fontFamily: 'monospace',
+                fontSize: '11px',
+                color: '#d8dde4',
+                zIndex: '99999',
+                pointerEvents: 'auto',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                display: 'none',
+                userSelect: 'text',
+                webkitUserSelect: 'text'
+            });
+
+            const logContent = document.createElement('div');
+            logContent.id = 'debug-log-content';
+            debugContainer.appendChild(logContent);
+
+            const copyBtn = document.createElement('button');
+            copyBtn.textContent = 'Copy Logs';
+            Object.assign(copyBtn.style, {
+                position: 'absolute',
+                top: '5px',
+                right: '10px',
+                background: '#e8972a',
+                color: '#0a0c0e',
+                border: 'none',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                zIndex: '100000'
+            });
+            copyBtn.onclick = function() {
+                const text = logContent.innerText;
+                navigator.clipboard.writeText(text).then(() => {
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyBtn.textContent = 'Copy Logs'; }, 1500);
+                }).catch(err => {
+                    alert('Log text:\n\n' + text);
+                });
+            };
+            debugContainer.appendChild(copyBtn);
+
+            function logToScreen(type, msg) {
+                const colors = { error: '#d94040', warn: '#e8972a', info: '#2db554', log: '#d8dde4' };
+                const line = document.createElement('div');
+                line.style.color = colors[type] || '#d8dde4';
+                line.style.marginBottom = '3px';
+                line.style.whiteSpace = 'pre-wrap';
+                line.textContent = `[${new Date().toLocaleTimeString()}] [${type.toUpperCase()}] ${msg}`;
+                if (type === 'error' || type === 'warn') {
+                    fetch('/log', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: type, message: msg })
+                    }).catch(() => {});
+                }
+
+
+            }
+
+            window.addEventListener('DOMContentLoaded', () => {
+                document.body.appendChild(debugContainer);
+                logToScreen('info', 'Debug console initialized.');
+            });
+
+            // Capture window errors
+            window.addEventListener('error', (e) => {
+                let msg = `${e.message} at ${e.filename}:${e.lineno}`;
+                if (e.error && e.error.stack) {
+                    msg += `\nStack:\n${e.error.stack}`;
+                }
+                logToScreen('error', msg);
+                const loadText = document.getElementById('load-text');
+                if (loadText) loadText.textContent = 'Error: ' + e.message;
+            });
+
+            window.addEventListener('unhandledrejection', (e) => {
+                let msg = `Promise rejection: ${e.reason}`;
+                if (e.reason && e.reason.stack) {
+                    msg += `\nStack:\n${e.reason.stack}`;
+                }
+                logToScreen('error', msg);
+            });
+
+            // Monkeypatch console
+            const originalLog = console.log;
+            const originalError = console.error;
+            const originalWarn = console.warn;
+
+            console.log = function(...args) {
+                originalLog.apply(console, args);
+                logToScreen('log', args.join(' '));
+            };
+            console.error = function(...args) {
+                originalError.apply(console, args);
+                logToScreen('error', args.join(' '));
+            };
+            console.warn = function(...args) {
+                originalWarn.apply(console, args);
+                logToScreen('warn', args.join(' '));
+            };
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Proza+Libre:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+    <!-- Pricedown: GTA-style font — served locally -->
+    <style>
+        @font-face {
+            font-family: 'Pricedown';
+            src: url('Pricedown.otf') format('opentype');
+            font-weight: normal;
+            font-style: normal;
+        }
+    </style>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --surface: #111;
+            --surface2: #1a1a1a;
+            --border: #2a2a2a;
+            --accent: #f5c400;
+            --accent-hover: #ffd700;
+            --green: #22c55e;
+            --red: #e03030;
+            --text: #fff;
+            --muted: rgba(255,255,255,0.45);
+            --font-ui: 'Arial Black', Arial, sans-serif;
+            --font-play: 'Pricedown', 'Arial Black', Arial, sans-serif;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-ui); overflow: hidden; }
+
+        canvas.emscripten { position: absolute; inset: 0; width: 100%; height: 100%; display: none; z-index: 10; cursor: none !important; touch-action: none; }
+
+        /* Loading overlay */
+        #loading-overlay { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: var(--bg); z-index: 50; gap: 1.2rem; }
+        #loading-overlay .spinner { width: 36px; height: 36px; border: 2px solid #222; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading-overlay .load-text { font-family: var(--font-ui); font-style: italic; font-size: 0.75rem; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+        #loading-overlay progress { width: 220px; height: 2px; appearance: none; border: none; background: #222; border-radius: 1px; }
+        #loading-overlay progress::-webkit-progress-bar { background: #222; border-radius: 1px; }
+        #loading-overlay progress::-webkit-progress-value { background: var(--accent); border-radius: 1px; transition: width 0.3s; }
+
+        /* Start screen — full GTA art background */
+        #start-screen {
+            position: absolute; inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            background: url('bg.png') center/cover no-repeat;
+        }
+        #start-screen::before {
+            content: '';
+            position: absolute; inset: 0;
+            background: rgba(0,0,0,0.25);
+            z-index: 0;
+        }
+
+
+        .start-content {
+            position: relative; z-index: 1;
+            display: flex; flex-direction: column;
+            align-items: center;
+            width: 100%; max-width: 400px;
+            padding: 2rem 1.5rem;
+        }
+
+        /* Logo — invert black→white on dark bg */
+        .logo-wrap {
+            margin-bottom: 2.4rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo-wrap img {
+            width: clamp(300px, 68vw, 500px);
+            height: auto;
+        }
+
+        /* Config panel */
+        .config-panel {
+            width: 100%;
+            margin-bottom: 1.2rem;
+        }
+        .config-row {
+            display: flex; align-items: center;
+            justify-content: space-between;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            gap: 1rem;
+        }
+        .config-row:last-child { border-bottom: none; }
+        .config-label {
+            font-family: var(--font-ui);
+            font-style: italic;
+            font-size: 0.72rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .config-control { display: flex; align-items: center; gap: 0.5rem; }
+
+        .toggle { position: relative; display: inline-flex; cursor: pointer; }
+        .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .toggle-track { width: 34px; height: 18px; background: rgba(255,255,255,0.1); border-radius: 9px; transition: background 0.2s; display: flex; align-items: center; padding: 0 3px; }
+        .toggle-thumb { width: 12px; height: 12px; background: rgba(255,255,255,0.3); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+        .toggle input:checked + .toggle-track { background: var(--accent); }
+        .toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(16px); background: #000; }
+
+        /* Play button — Pricedown, yellow */
+        #play-btn {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--accent);
+            color: #000;
+            border: none;
+            border-radius: 3px;
+            font-family: var(--font-play);
+            font-size: 2rem;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: background 0.15s, transform 0.08s;
+            box-shadow: 0 2px 20px rgba(245,196,0,0.3);
+        }
+        #play-btn:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 4px 28px rgba(245,196,0,0.5); }
+        #play-btn:active { transform: translateY(0); opacity: 0.9; }
+
+        /* Disclaimer / misc */
+        .disclaimer { margin-top: 0.8rem; width: 100%; }
+        .disclaimer p { font-family: var(--font-ui); font-style: italic; font-size: 0.65rem; color: var(--muted); line-height: 1.5; margin-bottom: 0.4rem; }
+        .disclaimer label { display: flex; align-items: center; gap: 0.45rem; font-family: var(--font-ui); font-style: italic; font-size: 0.68rem; color: rgba(255,255,255,0.3); cursor: pointer; }
+        .disclaimer input[type="checkbox"] { accent-color: var(--accent); }
+
+        .upload-row { margin-top: 0.5rem; width: 100%; display: none; }
+        .upload-row.visible { display: flex; }
+        .upload-label {
+            display: flex; align-items: center; gap: 0.5rem;
+            font-family: var(--font-ui); font-style: italic;
+            font-size: 0.68rem; color: var(--muted); cursor: pointer;
+            padding: 0.4rem 0.65rem; border: 1px dashed rgba(255,255,255,0.15);
+            border-radius: 3px; width: 100%;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        .upload-label:hover { border-color: var(--accent); color: var(--accent); }
+
+        .saves-row { display: none; align-items: center; gap: 0.5rem; width: 100%; margin-top: 0.8rem; }
+        .saves-row.visible { display: flex; }
+        .saves-label { font-family: var(--font-ui); font-style: italic; font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
+        .saves-status { font-family: var(--font-ui); font-style: italic; font-size: 0.7rem; color: var(--muted); }
+        .saves-status.ok { color: var(--green); }
+        .saves-status.err { color: var(--red); }
+        input.saves-input {
+            flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+            color: var(--text); font-size: 0.72rem; padding: 0.3rem 0.55rem;
+            border-radius: 3px; outline: none; font-family: monospace;
+            letter-spacing: 0.12em; transition: border-color 0.15s;
+        }
+        .saves-input:focus { border-color: var(--accent); }
+
+        .footer-links { margin-top: 1.2rem; display: flex; gap: 1.4rem; flex-wrap: wrap; justify-content: center; }
+        .footer-links a { font-family: var(--font-ui); font-style: italic; font-size: 0.62rem; color: rgba(255,255,255,0.18); text-decoration: none; letter-spacing: 0.04em; transition: color 0.15s; }
+        .footer-links a:hover { color: var(--accent); }
+
+        /* Build notice */
+        #build-notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); z-index: 100; }
+        .build-card { max-width: 540px; padding: 2.2rem; background: var(--surface); border: 1px solid #1f1f1f; border-radius: 10px; margin: 1rem; }
+        .build-card h1 { font-family: var(--font-play); color: var(--accent); font-size: 2rem; margin-bottom: 0.2rem; }
+        .build-card h2 { font-family: var(--font-ui); font-style: italic; color: rgba(255,255,255,0.4); font-size: 0.85rem; font-weight: 400; margin-bottom: 1.3rem; }
+        .build-step { display: flex; gap: 1rem; align-items: flex-start; margin-bottom: 1rem; }
+        .step-num { flex-shrink: 0; width: 24px; height: 24px; background: var(--accent); color: #000; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; }
+        .step-text { font-family: var(--font-ui); font-style: italic; font-size: 0.78rem; color: var(--muted); line-height: 1.55; }
+        .step-text code { background: #1a1a1a; border: 1px solid #222; color: var(--accent); padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.78em; font-style: normal; }
+        .step-text strong { color: var(--text); }
+        .build-cmd { background: #111; border: 1px solid #222; border-radius: 6px; padding: 0.85rem 1rem; font-family: monospace; font-size: 0.78rem; color: var(--accent); margin: 0.4rem 0; white-space: pre-wrap; word-break: break-all; }
+        .build-card .note { margin-top: 1.2rem; font-family: var(--font-ui); font-style: italic; font-size: 0.68rem; color: rgba(255,255,255,0.25); border-top: 1px solid #1a1a1a; padding-top: 0.9rem; line-height: 1.6; }
+        .build-card .note a { color: var(--accent); }
+        .touch-controls-wrapper { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="build-notice">
+    <div class="build-card">
+        <h1>re3DOS</h1>
+        <h2>GTA III — Browser Port</h2>
+        <div class="build-step">
+            <div class="step-num">1</div>
+            <div class="step-text">
+                <strong>Compile re3 to WebAssembly</strong><br>
+                Run the build script (installs Emscripten + compiles re3):
+                <div class="build-cmd">cd /Volumes/SSD/re3DOS
+./build/build.sh</div>
+                This takes ~20–40 min on first run.
+            </div>
+        </div>
+        <div class="build-step">
+            <div class="step-num">2</div>
+            <div class="step-text">
+                <strong>Provide GTA III game files</strong><br>
+                Copy your original GTA III files into <code>build/gta3-assets/</code> — needs <code>models/</code>, <code>audio/</code>, <code>data/</code>, <code>text/</code> folders.
+            </div>
+        </div>
+        <div class="build-step">
+            <div class="step-num">3</div>
+            <div class="step-text">
+                <strong>Start the server</strong><br>
+                <div class="build-cmd">./.venv/bin/python server.py --re3sky_local re3sky --custom_saves</div>
+                Open <strong>http://localhost:8001</strong>
+            </div>
+        </div>
+        <p class="note">
+            re3DOS uses the open-source <a href="https://github.com/halisker/re3" target="_blank">re3</a> engine (reverse-engineered GTA III). You must own the original game to provide assets. See <code>build/README.md</code> for full build documentation.
+        </p>
+    </div>
+</div>
+
+<!-- No rain canvas needed -->
+<canvas id="rain-canvas" style="display:none"></canvas>
+
+<div id="start-screen">
+    <div class="start-content">
+
+        <div class="logo-wrap">
+            <img src="logo.png" alt="re3DOS" id="re3dos-logo">
+        </div>
+
+        <div class="config-panel" id="config-panel">
+            <div class="config-row">
+                <span class="config-label">Fullscreen on start</span>
+                <label class="toggle">
+                    <input type="checkbox" id="cfg-fullscreen" checked>
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+            </div>
+        </div>
+
+        <button id="play-btn" onclick="startGame()"><span style="font-size:1.5rem;vertical-align:middle;">&#9654;</span>&ensp;PLAY</button>
+
+
+
+        <div class="upload-row" id="upload-row">
+            <label class="upload-label" for="asset-file-input">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4-4 4M12 8v8"/></svg>
+                Upload a GTA III file to confirm ownership
+            </label>
+            <input type="file" id="asset-file-input" hidden onchange="handleAssetFile(this)">
+        </div>
+
+        <div class="saves-row" id="saves-row">
+            <span class="saves-label">Cloud saves:</span>
+            <span class="saves-status" id="saves-status">checking&hellip;</span>
+            <input type="text" class="saves-input" id="saves-key" placeholder="5-char key" maxlength="5" onchange="handleSavesKey(this)">
+        </div>
+
+        <div class="footer-links">
+            <a href="https://github.com/halisker/re3" target="_blank">re3 source</a>
+            <a href="https://emscripten.org" target="_blank">Emscripten</a>
+        </div>
+    </div>
+</div>
+
+<div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="load-text" class="load-text">Initializing&hellip;</div>
+    <progress id="load-progress" value="0" max="100"></progress>
+</div>
+
+<canvas class="emscripten" id="canvas" width="640" height="480" oncontextmenu="event.preventDefault()"></canvas>
+<div class="touch-controls-wrapper"></div>
+<input type="file" id="original-game-file" hidden>
+
+<script>
+// Rain animation removed — clean dark background
+
+
+const params = new URLSearchParams(window.location.search);
+
+fetch('game.wasm', { method: 'HEAD' })
+    .then(r => {
+        if (r.ok) {
+            document.getElementById('build-notice').style.display = 'none';
+            const ss = document.getElementById('start-screen');
+            ss.style.display = 'flex';
+            localStorage.setItem('re3dos.ownsGame', 'true');
+            if (document.getElementById('disclaimer')) {
+                document.getElementById('disclaimer').style.display = 'none';
+            }
+            if (new URLSearchParams(window.location.search).get("custom_saves") === "1") {
+                document.getElementById('saves-row').classList.add('visible');
+                checkSavesKey();
+            }
+        }
+    }).catch(() => {});
+
+if (params.get('fullscreen') === '0') document.getElementById('cfg-fullscreen').checked = false;
+if (params.get('cheats') === '1') document.getElementById('cfg-cheats').checked = true;
+if (params.get('lang')) { const s = document.getElementById('cfg-lang'); for (let o of s.options) if (o.value === params.get('lang')) o.selected = true; }
+
+function onOwnershipChange(cb) { document.getElementById('upload-row').className = 'upload-row' + (cb.checked ? ' visible' : ''); }
+function handleAssetFile(input) { if (input.files.length > 0) { localStorage.setItem('re3dos.ownsGame', 'true'); document.getElementById('disclaimer').style.display = 'none'; document.getElementById('upload-row').className = 'upload-row'; if (window.provideOriginalFile) window.provideOriginalFile(input.files[0]); } }
+function onFpsPreset(sel) { document.getElementById('cfg-fps-custom').style.display = sel.value === 'custom' ? 'inline-block' : 'none'; }
+function checkSavesKey() { const key = localStorage.getItem('re3dos.savesKey') || ''; if (key.length === 5) { document.getElementById('saves-key').value = key; document.getElementById('saves-status').textContent = 'enabled'; document.getElementById('saves-status').className = 'saves-status ok'; } else { document.getElementById('saves-status').textContent = 'disabled'; } }
+function handleSavesKey(input) { const val = input.value.trim(); if (val.length === 5) { localStorage.setItem('re3dos.savesKey', val); document.getElementById('saves-status').textContent = 'enabled'; document.getElementById('saves-status').className = 'saves-status ok'; } else { localStorage.removeItem('re3dos.savesKey'); document.getElementById('saves-status').textContent = 'invalid'; document.getElementById('saves-status').className = 'saves-status err'; } }
+
+// ── Audio unlock ─────────────────────────────────────────────────────────────
+// Browsers (especially Safari) suspend the Web Audio API AudioContext until a
+// user gesture occurs. We call resume() on every interaction so the game audio
+// works as soon as the player touches the page.
+function _re3UnlockAudio() {
+    // Emscripten OpenAL
+    if (typeof AL !== 'undefined' && AL.currentCtx && AL.currentCtx.audioCtx) {
+        var ctx = AL.currentCtx.audioCtx;
+        if (ctx.state !== 'running') ctx.resume();
+    }
+    // SDL audio (mixer)
+    if (typeof SDL !== 'undefined' && SDL.audioContext && SDL.audioContext.state !== 'running') {
+        SDL.audioContext.resume();
+    }
+    // Any raw AudioContext on the page
+    if (typeof AudioContext !== 'undefined') {
+        document.querySelectorAll('*').forEach(function() {});
+    }
+}
+['click','touchstart','keydown'].forEach(function(ev) {
+    document.addEventListener(ev, _re3UnlockAudio, { capture: true, passive: true });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function pullCloudSaves(token) {
+    const slotNames = [];
+    for (let i = 1; i <= 8; i++) {
+        slotNames.push(`GTA3sf${i}.b`);
+    }
+    for (const name of slotNames) {
+        try {
+            const url = `/saves/download/${token}/${name}`;
+            const response = await fetch(url);
+            if (response.status === 200) {
+                const buffer = await response.arrayBuffer();
+                const uint8View = new Uint8Array(buffer);
+                const path = `/saves/${name}`;
+                FS.writeFile(path, uint8View);
+                console.log(`[Saves] Pulled ${name} from cloud successfully (${uint8View.length} bytes).`);
+            }
+        } catch (e) {
+            console.error(`[Saves] Error pulling ${name} from cloud:`, e);
+        }
+    }
+    await new Promise((resolve) => {
+        FS.syncfs(false, function(err) {
+            if (err) console.error("[Saves] Error syncing cloud saves to IDBFS:", err);
+            resolve();
+        });
+    });
+}
+
+function setupSavesHook() {
+    if (typeof FS === 'undefined' || !FS.close) {
+        console.warn("[Saves] FS not defined, retrying hook setup...");
+        setTimeout(setupSavesHook, 500);
+        return;
+    }
+    const originalClose = FS.close;
+    FS.close = function(stream) {
+        originalClose(stream);
+        if (stream.path && stream.path.startsWith('/saves/')) {
+            const path = stream.path;
+            const fileName = path.substring(path.lastIndexOf('/') + 1);
+            console.log('[Saves] Save file closed, syncing to IndexedDB:', path);
+            FS.syncfs(false, function(err) {
+                if (err) {
+                    console.error('[Saves] IDBFS sync failed:', err);
+                } else {
+                    console.log('[Saves] IDBFS sync successful.');
+                    const token = localStorage.getItem('re3dos.savesKey') || '';
+                    if (token.length === 5) {
+                        try {
+                            const content = FS.readFile(path);
+                            const blob = new Blob([content], { type: 'application/octet-stream' });
+                            const formData = new FormData();
+                            formData.append('token', token);
+                            formData.append('fileName', fileName);
+                            formData.append('file', blob, fileName);
+                            console.log(`[Saves] Uploading ${fileName} to cloud...`);
+                            fetch('/saves/upload', {
+                                method: 'POST',
+                                body: formData
+                            })
+                            .then(res => res.json())
+                            .then(data => {
+                                if (data.success) {
+                                    console.log(`[Saves] Uploaded ${fileName} to cloud successfully.`);
+                                } else {
+                                    console.error(`[Saves] Cloud upload failed:`, data);
+                                }
+                            })
+                            .catch(e => {
+                                console.error(`[Saves] Error uploading to cloud:`, e);
+                            });
+                        } catch (e) {
+                            console.error(`[Saves] Error reading file for cloud upload:`, e);
+                        }
+                    }
+                }
+            });
+        }
+    };
+}
+
+window.Module = {
+    printErr: function(text) {
+        if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+        console.error(text);
+        if (text.includes("RuntimeError") || text.includes("Exception") || text.includes("abort") || text.includes("assert") || text.includes("Assertion") || text.includes("Cannot enlarge memory") || text.includes("IndexSizeError")) {
+            const errDiv = document.createElement('div');
+            errDiv.style = "position:absolute;top:10px;left:10px;right:10px;background:rgba(200,0,0,0.95);color:white;padding:20px;z-index:99999;font-family:monospace;white-space:pre-wrap;border:3px solid white;border-radius:10px;box-shadow: 0 0 20px rgba(0,0,0,0.5);";
+            errDiv.innerHTML = "<h2>🎮 Game Crash Detected</h2><p>Please copy and share the trace below with the assistant:</p><textarea style='width:100%;height:300px;background:#330000;color:white;font-family:monospace;padding:10px;border:1px solid #770000;' onclick='this.select()'>" + text + "</textarea>";
+            document.body.appendChild(errDiv);
+        }
+    },
+    stdin: function() { return null; },
+    locateFile: function(path, prefix) {
+        return (prefix || '') + path + '?v=' + Date.now();
+    },
+
+    preRun: [function() {
+        console.log("[Saves] Pre-run: initializing saves directory...");
+        try {
+            FS.mkdir('/saves');
+        } catch (e) {
+            console.log("[Saves] /saves directory already exists.");
+        }
+        try {
+            FS.mount(FS.filesystems.IDBFS, {}, '/saves');
+            console.log("[Saves] IDBFS mounted successfully on /saves");
+        } catch (e) {
+            console.error("[Saves] Failed to mount IDBFS:", e);
+        }
+
+        Module.addRunDependency('sync_saves');
+        FS.syncfs(true, function(err) {
+            if (err) {
+                console.error("[Saves] Failed to sync saves from IndexedDB:", err);
+                Module.removeRunDependency('sync_saves');
+            } else {
+                console.log("[Saves] Synced saves from IndexedDB successfully.");
+                const checkAndPreload = () => {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    if (urlParams.get('clear_saves') === '1') {
+                        console.log("[Saves] clear_saves parameter detected, unlinking GTA3sf1.b...");
+                        try {
+                            FS.unlink('/saves/GTA3sf1.b');
+                        } catch (e) {}
+                    }
+                    if (!FS.analyzePath('/saves/GTA3sf1.b').exists) {
+                        console.log("[Saves] GTA3sf1.b not found in IDBFS, fetching preloaded save...");
+                        fetch('preloaded_save/GTA3sf1.b')
+                            .then(res => {
+                                if (res.ok) return res.arrayBuffer();
+                                throw new Error("No preloaded save found");
+                            })
+                            .then(buffer => {
+                                FS.writeFile('/saves/GTA3sf1.b', new Uint8Array(buffer));
+                                console.log("[Saves] Preloaded save imported successfully.");
+                            })
+                            .catch(e => {
+                                console.log("[Saves] No preloaded save imported:", e.message);
+                            });
+                    }
+                };
+
+                const token = localStorage.getItem('re3dos.savesKey') || '';
+                if (token.length === 5) {
+                    console.log("[Saves] Cloud saves key found, pulling files from server...");
+                    pullCloudSaves(token).finally(function() {
+                        checkAndPreload();
+                        Module.removeRunDependency('sync_saves');
+                    });
+                } else {
+                    checkAndPreload();
+                    Module.removeRunDependency('sync_saves');
+                }
+            }
+        });
+    }],
+
+    canvas: (function() {
+        const canvas = document.getElementById('canvas');
+        function updateCanvasSize() {}
+        canvas.addEventListener("webglcontextlost", function(e) {
+            alert('WebGL context lost. Please reload page.');
+            e.preventDefault();
+        }, false);
+        return canvas;
+    })(),
+    setStatus: function(text) {
+        if (!window.Module.setStatus.last) window.Module.setStatus.last = { time: Date.now(), text: '' };
+        if (text === window.Module.setStatus.last.text) return;
+        const m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+        const loadText = document.getElementById('load-text');
+        const loadProgress = document.getElementById('load-progress');
+        if (m) {
+            text = m[1];
+            if (loadProgress) {
+                loadProgress.value = parseInt(m[2]);
+                loadProgress.max = parseInt(m[4]);
+            }
+        }
+        if (loadText && text) {
+            loadText.textContent = text;
+        }
+        if (!text) {
+            console.log("re3 status complete, showing game canvas");
+            document.getElementById('loading-overlay').style.display = 'none';
+            document.getElementById('rain-canvas').style.display = 'none';
+            document.getElementById('canvas').style.display = 'block';
+        }
+    },
+    onRuntimeInitialized: function() {
+        console.log("re3 WebAssembly runtime initialized!");
+        setupSavesHook();
+        document.getElementById('loading-overlay').style.display = 'none';
+        document.getElementById('rain-canvas').style.display = 'none';
+        document.getElementById('canvas').style.display = 'block';
+    },
+    totalDependencies: 0,
+    monitorRunDependencies: function(left) {
+        this.totalDependencies = Math.max(this.totalDependencies, left);
+        window.Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : '');
+    }
+};
+
+function startGame() {
+    const fullscreen = document.getElementById('cfg-fullscreen').checked;
+    const cheats = true;   // always enabled
+    const lang = 'en';
+    const maxFps = 60;
+
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('rain-canvas').style.display = 'none';
+    document.getElementById('canvas').style.display = 'block';
+    const overlay = document.getElementById('loading-overlay');
+    overlay.style.display = 'flex';
+    window.re3Config = { fullscreen, cheats, lang, maxFps };
+
+    const script = document.createElement('script');
+    script.src = 'game.js?v=' + Date.now();
+    script.onerror = () => { document.getElementById('load-text').textContent = 'Error: game.js not found. Run build/build.sh first.'; };
+    document.head.appendChild(script);
+
+    window.addEventListener('click', function() {
+        if (window.Module && window.Module.SDL2 && window.Module.SDL2.audioContext && window.Module.SDL2.audioContext.state === 'suspended') {
+            window.Module.SDL2.audioContext.resume();
+        }
+    });
+    window.addEventListener('keydown', function() {
+        if (window.Module && window.Module.SDL2 && window.Module.SDL2.audioContext && window.Module.SDL2.audioContext.state === 'suspended') {
+            window.Module.SDL2.audioContext.resume();
+        }
+    });
+
+    if (fullscreen && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+}
+window.onGameReady = function() {
+    document.getElementById('loading-overlay').style.display = 'none';
+    document.getElementById('rain-canvas').style.display = 'none';
+    document.getElementById('canvas').style.display = 'block';
+};
+</script>
+</body>
+</html>

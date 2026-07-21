@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.bin
+re3sky/
+re3br/
+unpacked/
+saves/
+build/emsdk/
+build/re3/
+build/librw/
+build/wasm-build/
+build/gta3-assets/
+*.log
+.DS_Store
+scratch/
